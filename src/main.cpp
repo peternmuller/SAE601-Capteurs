@@ -1,12 +1,12 @@
-#include "LoRaE5.h"
-#include "secrets.h"
 #include <SHT2x.h>
-#include <SoftwareSerial.h>
 #include <Wire.h>
+#include <Zigbee.h>
 
+#ifndef ZIGBEE_MODE_ED
+#error "Zigbee end device mode is not selected in Tools->Zigbee mode"
+#endif
+#define TEMP_SENSOR_ENDPOINT_NUMBER 10
 #define LED 15
-#define LORA_RX_PIN 16
-#define LORA_TX_PIN 17
 
 #define uS_TO_S_FACTOR 1000000ULL
 #define TIME_TO_SLEEP 60
@@ -15,13 +15,16 @@
 
 RTC_DATA_ATTR float derniereTemperature = -999.0f;
 RTC_DATA_ATTR float derniereHumidite = -999.0f;
-RTC_DATA_ATTR bool setupLora = false;
 
-SoftwareSerial loraSerial(LORA_RX_PIN, LORA_TX_PIN);
-LoRaE5 myLoRaE5(&loraSerial);
+ZigbeeTempSensor zbTempSensor = ZigbeeTempSensor(TEMP_SENSOR_ENDPOINT_NUMBER);
 SHT2x sht;
 
 void setup() {
+  pinMode(3, OUTPUT);
+  digitalWrite(3, LOW);
+  delay(100);
+  pinMode(14, OUTPUT);
+  digitalWrite(14, HIGH);
   Serial.begin(115200);
   Wire.begin();
   sht.begin();
@@ -32,49 +35,52 @@ void setup() {
   float tempDiff = fabsf(temperature - derniereTemperature);
   float humDiff = fabsf(humidite - derniereHumidite);
 
+  Serial.print("Temperature: ");
+  Serial.print(temperature, 1);
+  Serial.print(" °C\tHumidity: ");
+  Serial.print(humidite, 1);
+  Serial.println(" %");
+
+  pinMode(LED, OUTPUT);
+  digitalWrite(LED, LOW);
+
   if (tempDiff > TEMP_THRESHOLD || humDiff > HUM_THRESHOLD) {
-    uint8_t donnees[2];
-    donnees[0] = (uint8_t)((temperature + 20) * 4);
-    donnees[1] = (uint8_t)(humidite * 2);
 
-    Serial.print("\tTempérature : ");
-    Serial.print(temperature);
-    Serial.print(" °C - ");
-    Serial.println(donnees[0], HEX);
-    Serial.print("\tHumidité : ");
-    Serial.print(humidite);
-    Serial.print(" % - ");
-    Serial.println(donnees[1], HEX);
+    zbTempSensor.setManufacturerAndModel("Espressif", "Peter-ZigbeeTempSensor");
+    zbTempSensor.setMinMaxValue(-20, 50);
+    zbTempSensor.setTolerance(1);
+    zbTempSensor.addHumiditySensor(0, 100, 1, 0.0);
 
-    loraSerial.begin(9600);
-    pinMode(LED, OUTPUT);
-    digitalWrite(LED, LOW);
+    Zigbee.addEndpoint(&zbTempSensor);
+    Zigbee.setRxOnWhenIdle(false);
 
-    if (!setupLora) {
-      myLoRaE5.init();
-      myLoRaE5.reset();
-      myLoRaE5.setEU868BandPlan();
-      myLoRaE5.setDR(5);
-      myLoRaE5.setPower(16);
-      myLoRaE5.setADR(true);
-      myLoRaE5.setMode(LoRaE5::Mode::ABP);
-      myLoRaE5.setDevAddr(SECRET_DEV_ADDR);
-      myLoRaE5.setNwkSKey(SECRET_NWK_SKEY);
-      myLoRaE5.setAppSKey(SECRET_APP_SKEY);
-      myLoRaE5.setPort(1);
-      setupLora = true;
-    } else {
-      myLoRaE5.wakeup();
+    esp_zb_cfg_t zigbeeConfig = ZIGBEE_DEFAULT_ED_CONFIG();
+    zigbeeConfig.nwk_cfg.zed_cfg.keep_alive = 10000;
+    Zigbee.setTimeout(10000);
+
+    if (!Zigbee.begin(&zigbeeConfig, false)) {
+      Serial.println("Zigbee failed to start!");
+      Serial.println("Rebooting...");
+      ESP.restart();
     }
+    Serial.println("Connecting to network");
+    while (!Zigbee.connected()) {
+      Serial.print(".");
+      delay(100);
+    }
+    Serial.println();
+    Serial.println("Successfully connected to Zigbee network");
 
-    Serial.println("\tEnvoi LoRa");
-    myLoRaE5.sendMessage(donnees, 2);
-    myLoRaE5.sleep();
+    zbTempSensor.setTemperature(temperature);
+    zbTempSensor.setHumidity(humidite);
+    zbTempSensor.report();
+    delay(250);
+
     derniereTemperature = temperature;
     derniereHumidite = humidite;
     digitalWrite(LED, HIGH);
   } else {
-    Serial.println("Pas d'envoi LoRa :");
+    Serial.println("Pas d'envoi ZigBee :");
     Serial.print("  Temp: ");
     Serial.print(temperature, 1);
     Serial.print(" °C (Δ ");
