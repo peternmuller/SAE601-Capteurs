@@ -1,9 +1,9 @@
-// Copyright 2024 Espressif Systems (Shanghai) PTE LTD
+// Copyright 2025 Espressif Systems (Shanghai) PTE LTD
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
@@ -13,11 +13,11 @@
 // limitations under the License.
 
 /**
- * @brief This example demonstrates Zigbee Color Dimmable light bulb with RGB and Temperature support.
+ * @brief This example demonstrates Zigbee Color Dimmable light bulb with RGB and Temperature support + simple Zigbee
+ * Range Extender (router).
  *
- * The example demonstrates how to use Zigbee library to create an end device with
- * color dimmable light end point supporting both RGB (X/Y) and Color Temperature modes.
- * The light bulb is a Zigbee end device, which is controlled by a Zigbee coordinator.
+ * The example demonstrates how to use Zigbee library to create a Zigbee network ragbe extender (router) with color
+ * dimmable light end point supporting both RGB (X/Y) and Color Temperature modes.
  *
  * Proper Zigbee mode must be selected in Tools->Zigbee mode
  * and also the correct partition scheme must be selected in Tools->Partition Scheme.
@@ -27,17 +27,19 @@
  * Created by Jan Procházka (https://github.com/P-R-O-C-H-Y/)
  */
 
-#ifndef ZIGBEE_MODE_ED
-#error "Zigbee end device mode is not selected in Tools->Zigbee mode"
+#ifndef ZIGBEE_MODE_ZCZR
+#error "Zigbee coordinator/router mode is not selected in Tools->Zigbee mode"
 #endif
 
 #include <Zigbee.h>
 
-/* Zigbee color dimmable light configuration */
+#define USE_CUSTOM_ZIGBEE_CONFIG 1
+#define ZIGBEE_EXTENDER_ENDPOINT 1
 #define ZIGBEE_RGB_LIGHT_ENDPOINT 10
 uint8_t led = RGB_BUILTIN;
 uint8_t button = BOOT_PIN;
 
+ZigbeeRangeExtender zbExtender = ZigbeeRangeExtender(ZIGBEE_EXTENDER_ENDPOINT);
 ZigbeeColorDimmableLight zbColorLight = ZigbeeColorDimmableLight(ZIGBEE_RGB_LIGHT_ENDPOINT);
 
 /********************* Temperature conversion functions **************************/
@@ -92,6 +94,12 @@ void setup() {
   // Init button for factory reset
   pinMode(button, INPUT_PULLUP);
 
+  // Optional: Set callback function for device identify
+  zbExtender.onIdentify(identify);
+
+  // Optional: Set Zigbee device name and model
+  zbColorLight.setManufacturerAndModel("Espressif", "Peter-ZBColorLightBulbExtender");
+
   // Enable both XY (RGB) and Temperature color capabilities
   uint16_t capabilities = ZIGBEE_COLOR_CAPABILITY_X_Y | ZIGBEE_COLOR_CAPABILITY_COLOR_TEMP;
   zbColorLight.setLightColorCapabilities(capabilities);
@@ -104,17 +112,26 @@ void setup() {
   zbColorLight.onIdentify(identify);
 
   // Optional: Set Zigbee device name and model
-  zbColorLight.setManufacturerAndModel("Espressif", "Peter-ZBColorLightBulb");
+  zbColorLight.setManufacturerAndModel("Espressif", "Peter-ZBColorLightBulbExtender");
 
   // Set min/max temperature range (High Kelvin -> Low Mireds: Min and Max is switched)
   zbColorLight.setLightColorTemperatureRange(kelvinToMireds(6500), kelvinToMireds(2000));
 
   // Add endpoint to Zigbee Core
-  Serial.println("Adding ZigbeeLight endpoint to Zigbee Core");
+  Serial.println("Adding ZigbeeLight Extender endpoint to Zigbee Core");
+  Zigbee.addEndpoint(&zbExtender);
   Zigbee.addEndpoint(&zbColorLight);
 
-  // When all EPs are registered, start Zigbee in End Device mode
-  if (!Zigbee.begin()) {
+#if USE_CUSTOM_ZIGBEE_CONFIG
+  // Optional: Create a custom Zigbee configuration for Zigbee Extender
+  esp_zb_cfg_t zigbeeConfig = ZIGBEE_DEFAULT_ROUTER_CONFIG();
+  zigbeeConfig.nwk_cfg.zczr_cfg.max_children = 20; // 10 is default
+
+  // When all EPs are registered, start Zigbee with custom config
+  if (!Zigbee.begin(&zigbeeConfig)) {
+#else
+  if (!Zigbee.begin(ZIGBEE_ROUTER)) {
+#endif
     Serial.println("Zigbee failed to start!");
     Serial.println("Rebooting...");
     ESP.restart();
