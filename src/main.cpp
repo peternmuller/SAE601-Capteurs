@@ -88,8 +88,8 @@ void identify(uint16_t time) {
 void setup() {
   Serial.begin(115200);
 
-  // Init RMT and leave light OFF
-  rgbLedWrite(led, 0, 0, 0);
+  // Init RMT and turn light ON
+  rgbLedWrite(led, 255, 255, 255);
 
   // Init button for factory reset
   pinMode(button, INPUT_PULLUP);
